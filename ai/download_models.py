@@ -95,8 +95,11 @@ def download_clip() -> bool:
         snapshot_download(
             repo_id=CLIP_REPO,
             local_dir=CLIP_DIR,
-            ignore_patterns=["*.bin", "*.h5", "*.msgpack", "*.ot", "*.onnx"],
-            # 只保留 pytorch 权重和配置文件
+            # 这个仓库同时放了两种权重：
+            #   clip_cn_vit-b-16.pt   ← 原版 Chinese-CLIP 格式，transformers 读不了，跳过
+            #   pytorch_model.bin     ← transformers 能读，必须保留
+            # 只跳过非 PyTorch 的冗余格式，别把 *.bin 也跳过了（踩过这个坑）
+            ignore_patterns=["*.pt", "*.h5", "*.msgpack", "*.ot", "*.onnx"],
         )
         print("  ✅ 中文 CLIP 就绪")
         return True

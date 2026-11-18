@@ -18,5 +18,8 @@ pillow>=10.4
 
 # Chinese-CLIP（中文图文检索）
 torch>=2.4          # 务必用 CPU 版：pip install torch --index-url https://download.pytorch.org/whl/cpu
-transformers>=4.45
+# ⚠️ 锁 4.x：transformers 5.x 改了 get_image_features 的返回类型，
+#    中文 CLIP 的文本塔又没有 pooler_output，会在 v5 上报
+#    "linear(): argument 'input' must be Tensor, not NoneType"
+transformers>=4.45,<5
 huggingface_hub>=0.26

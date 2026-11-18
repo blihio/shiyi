@@ -5,6 +5,17 @@
 # Chinese-CLIP（OFA-Sys/chinese-clip-vit-base-patch16）可以直接编码中文。
 #
 # mock 模式：不装模型，用哈希生成确定性假向量。
+#
+# ⚠️ 两个踩过的坑（改之前先看）：
+#   1. HuggingFace 那个仓库同时放了两份权重：
+#        clip_cn_vit-b-16.pt   ← 原版格式，transformers 读不了
+#        pytorch_model.bin     ← 这份才是 transformers 用的
+#      下载时别把 *.bin 忽略掉，否则报 "no file named model.safetensors or pytorch_model.bin"。
+#   2. 这个模型的 text_model **没有 pooler_output**（是 None），
+#      所以 text 特征要取 last_hidden_state[:, 0, :] 再过 text_projection；
+#      直接调 model.get_text_features() 在某些 transformers 版本会报
+#      "linear(): argument 'input' must be Tensor, not NoneType"。
+#      本文件已显式走 text_model + text_projection，绕开这个坑。
 
 import hashlib
 import os
@@ -28,7 +39,11 @@ def _load_real_model():
 
     # 优先用 download_models.py 预下载到本地的模型（断网也能启动），
     # 本地没有才回退到从 HuggingFace 在线拉取。
-    name = LOCAL_CLIP_DIR if os.path.exists(os.path.join(LOCAL_CLIP_DIR, "config.json")) else "OFA-Sys/chinese-clip-vit-base-patch16"
+    name = (
+        LOCAL_CLIP_DIR
+        if os.path.exists(os.path.join(LOCAL_CLIP_DIR, "config.json"))
+        else "OFA-Sys/chinese-clip-vit-base-patch16"
+    )
     print(f"[clip] 加载模型: {name}")
     _model = ChineseCLIPModel.from_pretrained(name)
     _model.eval()
@@ -56,11 +71,27 @@ def encode_image(image_path: str) -> list[float]:
         model, processor = _load_real_model()
         image = Image.open(image_path).convert("RGB")
         inputs = processor(images=image, return_tensors="pt")
+
         with torch.no_grad():
-            feats = model.get_image_features(**inputs)
+            feats = None
+            try:
+                candidate = model.get_image_features(**inputs)
+                if hasattr(candidate, "norm"):
+                    feats = candidate
+            except Exception:  # noqa: BLE001
+                feats = None
+
+            if feats is None:
+                # 兜底：手动走 vision_model + visual_projection
+                vision_out = model.vision_model(pixel_values=inputs["pixel_values"])
+                pooled = getattr(vision_out, "pooler_output", None)
+                if pooled is None:
+                    pooled = vision_out.last_hidden_state[:, 0, :]
+                feats = model.visual_projection(pooled)
+
         feats = feats / feats.norm(dim=-1, keepdim=True)
         return feats[0].tolist()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print(f"[clip] 真实模型不可用，用假向量兜底：{exc}")
         return _fake_vector(f"image:{os.path.basename(image_path)}")
 
@@ -76,10 +107,17 @@ def encode_text(query: str) -> list[float]:
 
         model, processor = _load_real_model()
         inputs = processor(text=[query], return_tensors="pt", padding=True)
+
         with torch.no_grad():
-            feats = model.get_text_features(**inputs)
+            # 见文件头"坑 2"：这个模型没有 pooler_output，取第一个 token 再投影
+            text_out = model.text_model(
+                input_ids=inputs["input_ids"],
+                attention_mask=inputs.get("attention_mask"),
+            )
+            feats = model.text_projection(text_out.last_hidden_state[:, 0, :])
+
         feats = feats / feats.norm(dim=-1, keepdim=True)
         return feats[0].tolist()
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         print(f"[clip] 文本编码失败，用假向量兜底：{exc}")
         return _fake_vector(f"text:{query}")

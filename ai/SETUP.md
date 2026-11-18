@@ -87,6 +87,25 @@ python check_env.py
 
 ## 4. 切到真实模式启动
 
+> **⚠️ 切换前先清理 mock 阶段的假数据**，否则真实向量和 hash 假向量混在同一个索引里，搜索排序会乱：
+>
+> ```powershell
+> # 1. 停掉 AI 服务（Ctrl+C）
+> # 2. 备份并清空 mock 索引
+> Move-Item ai/data/index.json ai/data/index.mock.json -ErrorAction SilentlyContinue
+> # 3. 清掉 mock 阶段建的人物（都是假脸分出来的）
+> #    最省事的做法：清空数据库里的人物关系，然后重新上传照片
+> ```
+>
+> **最干净的做法**（推荐，第一次切真实模式时做一次）：
+> ```powershell
+> # 停掉所有服务后
+> Remove-Item data\app.db, data\uploads\*, data\thumbs\* -Force
+> Remove-Item ai\data -Recurse -Force
+> npm run db:push      # 重建空库（演示账号会自动重建）
+> ```
+> 然后重新上传照片——这样人脸分组和向量索引全都是真实的。
+
 ```powershell
 cd ai
 $env:MOCK_AI = "0"
@@ -154,6 +173,31 @@ python eval/run_eval.py
 | 中文文件名/路径报错 | Windows 编码 | 把照片放到纯英文路径下测试 |
 | 内存不足 / 进程被杀 | CLIP + 人脸同时加载约 2GB | 关掉其他程序；或先只开人脸（`MOCK_AI` 只影响整体，可分阶段验证） |
 | 启动很慢（30 秒+） | 模型加载 | 正常，CPU 加载 torch 模型就是要这么久 |
+| `no file named model.safetensors, or pytorch_model.bin, found` | 模型目录里只有 `clip_cn_vit-b-16.pt`（原版格式），缺 transformers 格式的权重 | 删掉 `ai/models/chinese-clip/` 重新 `python download_models.py --clip-only`，确保脚本的 `ignore_patterns` **没有**排除 `*.bin` |
+| `linear(): argument 'input' (position 1) must be Tensor, not NoneType` | transformers 5.x 的 API 变更，或直接用 `get_text_features()` | ① `pip install "transformers>=4.45,<5"`；② `clip.py` 里已改成手动走 `text_model` + `text_projection`（取第一个 token），别改回去 |
+
+---
+
+## 附：本机已实测的记录（2026-11-18）
+
+这些是**真的跑通了的**，不是"应该能跑"：
+
+| 项 | 结果 |
+|---|---|
+| Python | 3.12.3 |
+| insightface | **2.1**（一次装成功，无需 VS 编译工具） |
+| onnxruntime | 1.32.0 |
+| torch | 2.15.0+cpu |
+| transformers | **4.57.6**（4.x 才行） |
+| buffalo_l | 281MB，下载 16 秒 |
+| Chinese-CLIP | 718MB（pytorch_model.bin） |
+| 人脸检测 | 样图检出 **6 张脸**，512 维向量，两次检测余弦相似度 **1.000000** |
+| 人脸耗时 | 0.2~0.3 秒/张（CPU） |
+| 图片编码 | 9~10 秒（首次含模型加载），之后每张约 0.3~0.5 秒 |
+| 中文语义检索 | 街景样图：`街拍 人像` +0.3355 / `户外 人群` +0.3360 / `一只橘猫在睡觉` +0.2787 / `风景 山水` +0.2781，**高期望均值比低期望高 0.0399，区分有效** |
+| 纯色图验证 | 纯橙色块图对 `一张纯色图片` 相似度 +0.4576（比 `一群人在街上走` 的 +0.2896 高，模型认得出） |
+
+> **结论：环境这条路是通的，D 不需要再花时间摸索装环境，直接按本文档跑即可。**
 
 ---
 
