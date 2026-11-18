@@ -48,6 +48,16 @@ const upload = multer({
   },
 })
 
+/**
+ * multer 给的 file.originalname 是按 latin1 解码的 UTF-8 字节，
+ * 直接存会让中文文件名变成 "æ´»å¨ä¸ - ..." 这种乱码。
+ * 这里按 latin1 → utf8 转回来；转不出来（本来就不是 UTF-8）就保留原样。
+ */
+function decodeOriginalName(name: string): string {
+  const decoded = Buffer.from(name, 'latin1').toString('utf8')
+  return decoded.includes('\uFFFD') ? name : decoded
+}
+
 type ImageMeta = { width: number | null; height: number | null }
 
 /** 读原图元数据：既校验“真的是图片”，又拿到原图宽高（不是缩略图宽高） */
@@ -134,7 +144,7 @@ assetsRouter.post('/', requireAuth, upload.array('files', 20), async (req, res, 
         data: {
           ownerId: req.userId!,
           filePath: publicUrl(file.path),
-          originalName: file.originalname,
+          originalName: decodeOriginalName(file.originalname),
           mimeType: file.mimetype,
           takenAt: exif.takenAt ?? new Date(),
           lat: exif.lat,
