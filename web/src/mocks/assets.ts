@@ -58,25 +58,6 @@ export const mockAlbums: Album[] = [
   { id: 'al_3', name: '家里的小猫', coverAssetId: 'a_3', count: 4 },
 ]
 
-/** 时间轴分组：按 YYYY-MM 倒序 */
-export function groupByMonth(assets: Asset[]): { month: string; items: Asset[] }[] {
-  const map = new Map<string, Asset[]>()
-  for (const a of assets) {
-    const key = (a.takenAt ?? new Date().toISOString()).slice(0, 7)
-    const list = map.get(key) ?? []
-    list.push(a)
-    map.set(key, list)
-  }
-  return [...map.entries()]
-    .sort((a, b) => (a[0] < b[0] ? 1 : -1))
-    .map(([month, items]) => ({
-      month,
-      items: items.slice().sort((a, b) => ((a.takenAt ?? '') < (b.takenAt ?? '') ? 1 : -1)),
-    }))
-}
-
-/** 把 2026-11 显示成 "2026 年 11 月" */
-export function formatMonth(month: string): string {
-  const [y, m] = month.split('-')
-  return `${y} 年 ${Number(m)} 月`
-}
+// 分组和时间格式化统一放在 lib/date.ts 里，这里转出去保持向后兼容，
+// 免得 B 的页面要改 import 路径。
+export { formatMonth, groupByMonth } from '../lib/date'

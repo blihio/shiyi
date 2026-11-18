@@ -1,6 +1,7 @@
 // 负责人：A
 import { Navigate, Route, Routes } from 'react-router-dom'
 
+import RequireAuth from './components/RequireAuth'
 import Layout from './layout/Layout'
 import Login from './pages/Login'
 import Timeline from './pages/Timeline'
@@ -18,7 +19,13 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/s/:key" element={<Shared />} />
 
-      <Route element={<Layout />}>
+      <Route
+        element={
+          <RequireAuth>
+            <Layout />
+          </RequireAuth>
+        }
+      >
         <Route path="/" element={<Navigate to="/timeline" replace />} />
         <Route path="/timeline" element={<Timeline />} />
         <Route path="/people" element={<People />} />

@@ -38,6 +38,7 @@ ai/data/
 .idea/shelf/
 .idea/httpRequests/
 .idea/misc.xml
+.idea/modules.xml
 .idea/inspectionProfiles/
 *.iws
 *.iml
