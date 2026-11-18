@@ -32,6 +32,25 @@ export type Album = {
   count: number
 }
 
+/** GET /api/albums/:id 的返回 */
+export type AlbumDetailData = {
+  id: string
+  name: string
+  assets: Asset[]
+}
+
+/** POST /api/albums/:id/share 的返回 */
+export type ShareResp = {
+  key: string
+  url: string
+}
+
+/** GET /api/share/:key 的返回（免登录） */
+export type SharedAlbum = {
+  album: { id: string; name: string }
+  assets: Asset[]
+}
+
 export type MapPoint = {
   lat: number
   lng: number

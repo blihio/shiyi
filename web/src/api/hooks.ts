@@ -4,11 +4,12 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 import { api, apiPage, uploadWithProgress } from './client'
-import type { Asset, Person, SearchHit } from './types'
+import type { Album, AlbumDetailData, Asset, Person, SearchHit, ShareResp, SharedAlbum } from './types'
 
 /** 一页多少张（后端上限 100） */
 const PAGE_SIZE = 60
 const PEOPLE_KEY = ['people']
+const ALBUMS_KEY = ['albums']
 
 /**
  * 照片列表，可按人物查询。
@@ -88,5 +89,68 @@ export function useUploadAssets() {
         void queryClient.invalidateQueries({ queryKey: ['search'] })
       }, 2500)
     },
+  })
+}
+
+// ---------------- 相册与分享 ----------------
+
+export function useAlbums() {
+  return useQuery({
+    queryKey: ALBUMS_KEY,
+    queryFn: ({ signal }) => api<Album[]>('/albums', { signal }),
+  })
+}
+
+export function useCreateAlbum() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (name: string) =>
+      api<Album>('/albums', { method: 'POST', body: JSON.stringify({ name }) }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ALBUMS_KEY })
+    },
+  })
+}
+
+export function useAlbum(albumId?: string) {
+  return useQuery({
+    queryKey: ['album', albumId],
+    enabled: Boolean(albumId),
+    queryFn: ({ signal }) => api<AlbumDetailData>(`/albums/${encodeURIComponent(albumId ?? '')}`, { signal }),
+  })
+}
+
+export function useAddAssetsToAlbum(albumId: string | undefined) {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (assetIds: string[]) =>
+      api<{ ok: boolean; count: number }>(`/albums/${encodeURIComponent(albumId ?? '')}/assets`, {
+        method: 'POST',
+        body: JSON.stringify({ assetIds }),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['album', albumId] })
+      void queryClient.invalidateQueries({ queryKey: ALBUMS_KEY })
+    },
+  })
+}
+
+export function useCreateShare(albumId: string | undefined) {
+  return useMutation({
+    mutationFn: () =>
+      api<ShareResp>(`/albums/${encodeURIComponent(albumId ?? '')}/share`, {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
+  })
+}
+
+/** 免登录读取分享相册（/s/:key） */
+export function useSharedAlbum(key?: string) {
+  return useQuery({
+    queryKey: ['share', key],
+    enabled: Boolean(key),
+    retry: false,
+    queryFn: ({ signal }) => api<SharedAlbum>(`/share/${encodeURIComponent(key ?? '')}`, { signal }),
   })
 }
