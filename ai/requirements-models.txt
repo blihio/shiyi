@@ -1,13 +1,22 @@
 # 负责人：D
-# 真实模型依赖（体积大，约 2GB，只在要用真的人脸/语义搜索时安装）
-# 安装：python -m pip install -r requirements-models.txt
+# 真实模型依赖（体积大，约 2GB，只在要用真实人脸/语义搜索时安装）
+#
+# 推荐分两步装（避免 torch 装成 3GB 的 CUDA 版）：
+#   1) python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   2) python -m pip install -r requirements-models.txt
+#
+# 装完跑： python download_models.py       # 预下载模型
+#         python check_env.py              # 自检
+# 详细说明见 ai/SETUP.md
+
 -r requirements.txt
 
 # 人脸检测 + 512 维特征（CPU 版，不需要 PyTorch）
-insightface>=0.7.3
+insightface>=2.1
 onnxruntime>=1.19
 pillow>=10.4
 
 # Chinese-CLIP（中文图文检索）
-torch>=2.4          # CPU 版即可：pip install torch --index-url https://download.pytorch.org/whl/cpu
+torch>=2.4          # 务必用 CPU 版：pip install torch --index-url https://download.pytorch.org/whl/cpu
 transformers>=4.45
+huggingface_hub>=0.26

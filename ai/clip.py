@@ -13,6 +13,8 @@ import numpy as np
 
 MOCK = os.getenv("MOCK_AI", "1") == "1"
 DIM = 512
+MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
+LOCAL_CLIP_DIR = os.path.join(MODELS_DIR, "chinese-clip")
 
 _model = None
 _processor = None
@@ -24,7 +26,10 @@ def _load_real_model():
         return _model, _processor
     from transformers import ChineseCLIPModel, ChineseCLIPProcessor  # type: ignore
 
-    name = "OFA-Sys/chinese-clip-vit-base-patch16"
+    # 优先用 download_models.py 预下载到本地的模型（断网也能启动），
+    # 本地没有才回退到从 HuggingFace 在线拉取。
+    name = LOCAL_CLIP_DIR if os.path.exists(os.path.join(LOCAL_CLIP_DIR, "config.json")) else "OFA-Sys/chinese-clip-vit-base-patch16"
+    print(f"[clip] 加载模型: {name}")
     _model = ChineseCLIPModel.from_pretrained(name)
     _model.eval()
     _processor = ChineseCLIPProcessor.from_pretrained(name)

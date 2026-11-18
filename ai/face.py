@@ -11,6 +11,7 @@ import numpy as np
 
 MOCK = os.getenv("MOCK_AI", "1") == "1"
 DIM = 512
+MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 
 _analyzer = None
 
@@ -21,7 +22,8 @@ def _load_real_model():
         return _analyzer
     from insightface.app import FaceAnalysis  # type: ignore
 
-    app = FaceAnalysis(name="buffalo_l", providers=["CPUExecutionProvider"])
+    # root 指向 ai/models，配合 download_models.py 预下载的模型，断网也能启动
+    app = FaceAnalysis(name="buffalo_l", root=MODELS_DIR, providers=["CPUExecutionProvider"])
     app.prepare(ctx_id=-1, det_size=(640, 640))
     _analyzer = app
     return _analyzer
