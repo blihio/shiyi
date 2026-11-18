@@ -162,6 +162,8 @@ Content-Type: multipart/form-data
 
 返回该城市的有 GPS 照片，响应格式与照片列表相同。城市使用点位接口相同的归属规则。
 
+如果点击没有城市名称的点位，传入标记上的 `lat` 和 `lng`，例如 `GET /api/map/assets?lat=30.12&lng=110.87&page=1&pageSize=50`。坐标按点位接口的同一规则匹配，`city` 与经纬度筛选只能选用一种。省略这两种条件时，返回全部有 GPS 的照片。
+
 ---
 
 ## 5. 搜索（Search）
