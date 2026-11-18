@@ -21,7 +21,7 @@ export type Asset = {
 export type Person = {
   id: string
   name: string | null
-  coverAssetId?: string
+  coverAssetId?: string | null
   faceCount: number
 }
 
