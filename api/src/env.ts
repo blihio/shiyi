@@ -4,8 +4,12 @@
 import path from 'node:path'
 
 // data 目录固定在仓库根：shiyi/data
-export const ROOT_DIR = path.resolve(__dirname, '../../..')
-export const DATA_DIR = path.join(ROOT_DIR, 'data')
+// __dirname 是 api/src，退两级才是仓库根（退三级会跑到仓库外）
+export const ROOT_DIR = path.resolve(__dirname, '../..')
+// 测试时用 DATA_DIR 指到临时目录，避免把测试图片写进真实 data/
+export const DATA_DIR = process.env.DATA_DIR
+  ? path.resolve(process.env.DATA_DIR)
+  : path.join(ROOT_DIR, 'data')
 export const UPLOAD_DIR = path.join(DATA_DIR, 'uploads')
 export const THUMB_DIR = path.join(DATA_DIR, 'thumbs')
 

@@ -2,15 +2,18 @@
 // 上传 / 列表 / 详情 / 收藏 / 删除
 // 接口定义见 docs/api-contract.md 第 2 节
 
-import path from 'node:path'
 import { randomUUID } from 'node:crypto'
+import fs from 'node:fs/promises'
+import path from 'node:path'
 
 import { Router } from 'express'
 import multer from 'multer'
+import sharp from 'sharp'
 import type { Prisma } from '@prisma/client'
 
 import { MAX_UPLOAD_MB, UPLOAD_DIR } from '../env'
 import { embedImage } from '../lib/ai'
+import { ApiError, InvalidFileTypeError } from '../lib/errors'
 import { guessCity, readExif } from '../lib/exif'
 import { syncFacesFromAi } from '../lib/faces'
 import { prisma } from '../lib/prisma'
@@ -20,17 +23,55 @@ import { requireAuth } from '../middleware/auth'
 
 export const assetsRouter = Router()
 
+// 只允许这三种图片。MIME/扩展名是客户端可伪造的第一道门，
+// 真正的校验是下面 sharp.metadata() 能不能解码。
+const ALLOWED_MIME_TYPES = new Set(['image/jpeg', 'image/jpg', 'image/png', 'image/webp'])
+const ALLOWED_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp'])
+const ALLOWED_FORMATS = new Set(['jpeg', 'png', 'webp'])
+
 const upload = multer({
   storage: multer.diskStorage({
     destination: (_req, _file, cb) => cb(null, UPLOAD_DIR),
     filename: (_req, file, cb) => {
-      const ext = path.extname(file.originalname).toLowerCase() || '.jpg'
+      const ext = path.extname(file.originalname).toLowerCase()
       cb(null, `${randomUUID()}${ext}`)
     },
   }),
   limits: { fileSize: MAX_UPLOAD_MB * 1024 * 1024 },
-  fileFilter: (_req, file, cb) => cb(null, file.mimetype.startsWith('image/')),
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase()
+    if (!ALLOWED_MIME_TYPES.has(file.mimetype) || !ALLOWED_EXTENSIONS.has(ext)) {
+      cb(new InvalidFileTypeError())
+      return
+    }
+    cb(null, true)
+  },
 })
+
+type ImageMeta = { width: number | null; height: number | null }
+
+/** 读原图元数据：既校验“真的是图片”，又拿到原图宽高（不是缩略图宽高） */
+async function inspectImage(absPath: string): Promise<ImageMeta> {
+  const meta = await sharp(absPath)
+    .metadata()
+    .catch(() => null)
+
+  if (!meta?.format || !ALLOWED_FORMATS.has(meta.format)) {
+    throw new InvalidFileTypeError()
+  }
+
+  // EXIF orientation 5~8 表示图片被旋转了 90/270 度：
+  // 原始像素宽高和用户看到的宽高是反的，这里统一存“显示尺寸”。
+  const swap = meta.orientation !== undefined && meta.orientation >= 5 && meta.orientation <= 8
+  return {
+    width: (swap ? meta.height : meta.width) ?? null,
+    height: (swap ? meta.width : meta.height) ?? null,
+  }
+}
+
+async function removeFiles(files: Express.Multer.File[]) {
+  await Promise.all(files.map((file) => fs.unlink(file.path).catch(() => undefined)))
+}
 
 function toDto(a: {
   id: string
@@ -63,16 +104,32 @@ function toDto(a: {
 
 /** POST /api/assets —— 上传（可多张） */
 assetsRouter.post('/', requireAuth, upload.array('files', 20), async (req, res, next) => {
+  const files = (req.files ?? []) as Express.Multer.File[]
+  let processed = 0
+
   try {
-    const files = (req.files ?? []) as Express.Multer.File[]
     if (files.length === 0) {
-      res.status(400).json({ error: { code: 'INVALID_PARAMS', message: '没有收到文件' } })
-      return
+      throw new ApiError(400, 'INVALID_PARAMS', '没有收到文件')
+    }
+
+    // 先整批校验：一张坏图就整批拒绝，避免“前几张入库、后一张报错”的半批数据
+    const metas: ImageMeta[] = []
+    for (const file of files) {
+      try {
+        metas.push(await inspectImage(file.path))
+      } catch (err) {
+        await removeFiles(files)
+        processed = files.length
+        throw err instanceof InvalidFileTypeError ? err : new InvalidFileTypeError()
+      }
     }
 
     const created = []
-    for (const file of files) {
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]!
+      const meta = metas[i]!
       const exif = await readExif(file.path)
+
       const asset = await prisma.asset.create({
         data: {
           ownerId: req.userId!,
@@ -83,31 +140,36 @@ assetsRouter.post('/', requireAuth, upload.array('files', 20), async (req, res, 
           lat: exif.lat,
           lng: exif.lng,
           cameraModel: exif.cameraModel,
-          width: exif.width,
-          height: exif.height,
+          // 用原图元数据，不用缩略图尺寸兜底
+          width: meta.width,
+          height: meta.height,
         },
       })
+      // 从这之后文件已被数据库引用，出错也不能删
+      processed = i + 1
 
       const thumb = await makeThumb(file.path, asset.id).catch(() => null)
       const updated = await prisma.asset.update({
         where: { id: asset.id },
-        data: {
-          thumbPath: thumb ? publicUrl(thumb.thumbAbsPath) : null,
-          width: asset.width ?? thumb?.width ?? null,
-          height: asset.height ?? thumb?.height ?? null,
-        },
+        data: { thumbPath: thumb ? publicUrl(thumb.thumbAbsPath) : null },
       })
       created.push(toDto(updated))
 
       // AI 处理放在后台，不要阻塞上传响应（AI 服务没起也不影响）
       void (async () => {
-        const result = await embedImage(asset.id, file.path)
-        await syncFacesFromAi(req.userId!, asset.id, result)
+        try {
+          const result = await embedImage(asset.id, file.path)
+          await syncFacesFromAi(req.userId!, asset.id, result)
+        } catch (err) {
+          console.error('[ai] 后台处理失败', asset.id, err)
+        }
       })()
     }
 
     res.json({ data: created })
   } catch (err) {
+    // 只清理还没入库的文件；已入库的原图保留
+    await removeFiles(files.slice(processed))
     next(err)
   }
 })
