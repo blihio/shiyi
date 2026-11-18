@@ -1,0 +1,64 @@
+
+> shiyi@0.1.0 dev
+> concurrently -n api,web,ai -c blue,green,magenta "npm run dev:api" "npm run dev:web" "npm run dev:ai"
+
+[api] 
+[api] > shiyi@0.1.0 dev:api
+[api] > npm --prefix api run dev
+[api] 
+[web] 
+[web] > shiyi@0.1.0 dev:web
+[web] > npm --prefix web run dev
+[web] 
+[ai] 
+[ai] > shiyi@0.1.0 dev:ai
+[ai] > cd ai && set MOCK_AI=0 && python -m uvicorn main:app --host 127.0.0.1 --port 8000 --reload
+[ai] 
+[web] 
+[web] > shiyi-web@0.1.0 dev
+[web] > vite
+[web] 
+[api] 
+[api] > shiyi-api@0.1.0 dev
+[api] > tsx watch src/index.ts
+[api] 
+[ai] INFO:     Will watch for changes in these directories: ['C:\\Users\\Lenovo\\Documents\\deepseek-harness\\default-workspace\\shiyi\\ai']
+[ai] INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
+[ai] INFO:     Started reloader process [26520] using WatchFiles
+[web] 
+[web]   VITE v5.4.21  ready in 1124 ms
+[web] 
+[web]   ➜  Local:   http://localhost:5173/
+[web]   ➜  Network: use --host to expose
+[api] [api] http://localhost:3000
+[ai] INFO:     Started server process [24164]
+[ai] INFO:     Waiting for application startup.
+[ai] Using a slow image processor as `use_fast` is unset and a slow processor was saved with this model. `use_fast=True` will be the default behavior in v4.52, even if the model was saved with a slow processor. This will result in minor differences in outputs. You'll still be able to use a slow processor with `use_fast=False`.
+[ai] INFO:     Application startup complete.
+[ai] INFO:     127.0.0.1:55628 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:58421 - "GET /health HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:50220 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:54566 - "POST /embed HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:51348 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:51671 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:57561 - "POST /search HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:57561 - "POST /search HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:57561 - "POST /search HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:57561 - "POST /search HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:57561 - "POST /search HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:49243 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:57485 - "POST /embed HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:57485 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:57642 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:50836 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:61109 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:51146 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:55488 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:55488 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:52354 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:49164 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:56390 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:56428 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:49671 - "POST /persons/cover-faces HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:65069 - "GET /embeddings/cmwm195zt0003xu3kvw10mtjz HTTP/1.1" 200 OK
+[ai] INFO:     127.0.0.1:65070 - "GET /embeddings/cmwm17esv0001xu3ku8hqb7og HTTP/1.1" 200 OK

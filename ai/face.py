@@ -34,6 +34,29 @@ def load_real_model():
     return analyzer
 
 
+@cache
+def load_small_detector():
+    """小尺寸检测器：用于「脸占满整张图」的特写照片。
+
+    insightface 的检测框是按 det_size 缩放到固定尺度后推理的，
+    一张 2832x4256 的大头照在 640 尺度下人脸会超过检测尺度上限，直接漏检；
+    缩到 320 尺度反而能检出来（实测 score 0.877）。
+    """
+    from insightface.app import FaceAnalysis  # type: ignore
+
+    root = Path(__file__).resolve().parent / "models"
+    if not (root / "models" / "buffalo_l").is_dir() and (root / "insightface" / "models" / "buffalo_l").is_dir():
+        root /= "insightface"
+    analyzer = FaceAnalysis(
+        name="buffalo_l",
+        root=str(root),
+        allowed_modules=["detection", "recognition"],
+        providers=["CPUExecutionProvider"],
+    )
+    analyzer.prepare(ctx_id=-1, det_size=(320, 320))
+    return analyzer
+
+
 def _fake_vector(seed: str, dim: int = DIM) -> list[float]:
     """由字符串确定性地生成一个单位向量（演示用）"""
     h = hashlib.sha256(seed.encode("utf-8")).digest()
@@ -68,13 +91,20 @@ def detect_faces(image_path: str) -> list[dict]:
         rgb = ImageOps.exif_transpose(image).convert("RGB")
     bgr = np.asarray(rgb)[:, :, ::-1].copy()
 
+    detected = list(load_real_model().get(bgr))
+    if not detected:
+        # 特写/大头照回退：脸占满画面时 640 尺度会漏检，缩小尺度再试一次
+        detected = list(load_small_detector().get(bgr))
+
     faces = []
-    for face in load_real_model().get(bgr):
+    for face in detected:
         x1, y1, x2, y2 = face.bbox.astype(int).tolist()
         faces.append(
             {
                 "bbox": [x1, y1, x2 - x1, y2 - y1],
                 "vec": face.embedding.astype(float).tolist(),
+                "score": float(getattr(face, "det_score", 1.0)),
             }
         )
+    faces.sort(key=lambda f: f["bbox"][2] * f["bbox"][3], reverse=True)
     return faces
