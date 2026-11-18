@@ -28,11 +28,11 @@
 | 项 | 约定 |
 |---|---|
 | 基础路径 | `/api` |
-| 鉴权 | 除 `/api/auth/login` 和 `/api/share/:key` 外，都要带 `Authorization: Bearer <token>` |
+| 鉴权 | 除 `/api/auth/login`、`/api/auth/register` 和 `/api/share/:key` 外，都要带 `Authorization: Bearer <token>` |
 | 分页 | `?page=1&pageSize=50`，`pageSize` 最大 100 |
 | 时间 | **一律 ISO-8601 UTC 字符串**，例：`2026-11-17T10:00:00.000Z`（不要传时间戳数字） |
 | ID | 字符串（cuid） |
-| 错误码 | `UNAUTHORIZED` `INVALID_PARAMS` `NOT_FOUND` `FORBIDDEN` `INTERNAL` `AI_SERVICE_ERROR` |
+| 错误码 | `UNAUTHORIZED` `INVALID_PARAMS` `INVALID_FILE_TYPE` `EMAIL_TAKEN` `NOT_FOUND` `FORBIDDEN` `INTERNAL` `AI_SERVICE_ERROR` |
 
 ---
 
@@ -45,6 +45,18 @@
 // 返回
 { "data": { "token": "eyJhbGci...", "user": { "id": "u_1", "email": "demo@shiyi.local" } } }
 ```
+
+### `POST /api/auth/register`
+```json
+// 请求
+{ "email": "new@shiyi.local", "password": "至少8位" }
+// 成功 201
+{ "data": { "token": "eyJhbGci...", "user": { "id": "u_2", "email": "new@shiyi.local" } } }
+// 失败
+{ "error": { "code": "EMAIL_TAKEN", "message": "该邮箱已注册" } }   // 409
+{ "error": { "code": "INVALID_PARAMS", "message": "邮箱格式不正确" } } // 400
+```
+> 邮箱统一 `trim().toLowerCase()` 后存储；密码最短 8 位；注册成功直接返回 token，前端可免登录。
 
 ### `GET /api/auth/me`
 ```json
@@ -59,12 +71,17 @@
 ```
 Content-Type: multipart/form-data
 字段名：files（可多张，最多 20 张）
+允许类型：JPG / JPEG / PNG / WebP（MIME + 扩展名 + 解码校验）
+单张上限：MAX_UPLOAD_MB（默认 20MB）
 ```
 ```json
-{ "data": [ { "id": "a_1", "originalName": "IMG_001.jpg", "thumbUrl": "/uploads/thumb/a_1.webp" } ] }
+{ "data": [ { "id": "a_1", "originalName": "IMG_001.jpg", "thumbUrl": "/thumbs/a_1.webp",
+              "width": 4032, "height": 3024 } ] }
 ```
-> 后端处理：存原图 → sharp 生成 600px 缩略图 → exifr 提拍摄时间/经纬度/相机 → 调 AI 服务 `/embed` 拿人脸和图片向量 → 落库。
+> 后端处理：存原图 → sharp 读原图元数据（宽高 + 解码校验）→ exifr 提拍摄时间/经纬度/相机 → 生成 600px 缩略图 → 调 AI 服务 `/embed` 拿人脸和图片向量 → 落库。
+> `width` / `height` 是**原图显示尺寸**（不是缩略图尺寸）；EXIF orientation 5~8 会交换宽高。
 > AI 服务不可用时**不要报错**，照片照常保存，只是没有人物和搜索数据。
+> 非白名单类型、伪造 MIME、无法解码的文件返回 `400 INVALID_FILE_TYPE`，并删除已落盘的文件。
 
 ### `GET /api/assets` 列表（时间轴就用这个）
 ```
@@ -73,7 +90,7 @@ Content-Type: multipart/form-data
 ```json
 {
   "data": [
-    { "id": "a_1", "thumbUrl": "/uploads/thumb/a_1.webp", "takenAt": "2026-11-17T10:00:00.000Z",
+    { "id": "a_1", "thumbUrl": "/thumbs/a_1.webp", "takenAt": "2026-11-17T10:00:00.000Z",
       "lat": 30.27, "lng": 120.15, "cameraModel": "iPhone 15", "isFavorite": false }
   ],
   "meta": { "page": 1, "pageSize": 50, "total": 132 }
