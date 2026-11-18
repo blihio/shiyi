@@ -40,6 +40,8 @@ describe('assets', () => {
     // 1200x900 原图；如果错误地用了 600px 缩略图，这里会是 600x450
     expect(asset.width).toBe(ORIGINAL_WIDTH)
     expect(asset.height).toBe(ORIGINAL_HEIGHT)
+    // 缩略图 URL 统一在 /uploads/thumbs/ 下，前端只依赖 /uploads 代理
+    expect(asset.thumbUrl).toMatch(/^\/uploads\/thumbs\/.+\.webp$/)
 
     const detail = await request(app)
       .get(`/api/assets/${asset.id}`)

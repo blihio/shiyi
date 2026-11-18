@@ -11,7 +11,9 @@ export const DATA_DIR = process.env.DATA_DIR
   ? path.resolve(process.env.DATA_DIR)
   : path.join(ROOT_DIR, 'data')
 export const UPLOAD_DIR = path.join(DATA_DIR, 'uploads')
-export const THUMB_DIR = path.join(DATA_DIR, 'thumbs')
+// 缩略图放在 uploads 下面：对外 URL 统一为 /uploads/thumbs/xxx.webp，
+// 这样 Vite 的 /uploads 代理和生产环境的单静态目录都能直接覆盖。
+export const THUMB_DIR = path.join(UPLOAD_DIR, 'thumbs')
 
 export const PORT = Number(process.env.PORT ?? 3000)
 export const JWT_SECRET = process.env.JWT_SECRET ?? 'dev-only-change-me-in-production'

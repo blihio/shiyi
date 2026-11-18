@@ -29,8 +29,9 @@ export function createApp() {
   app.use(cors({ origin: CORS_ORIGIN }))
   app.use(express.json())
 
-  // 照片和缩略图的静态访问
+  // 照片和缩略图的静态访问（缩略图在新路径 /uploads/thumbs/ 下）
   app.use('/uploads', express.static(path.join(DATA_DIR, 'uploads')))
+  // 兼容旧数据的 /thumbs/<id>.webp；新上传一律返回 /uploads/thumbs/<id>.webp
   app.use('/thumbs', express.static(path.join(DATA_DIR, 'thumbs')))
 
   app.get('/api/health', async (_req, res) => {
