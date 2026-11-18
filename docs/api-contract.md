@@ -75,7 +75,7 @@ Content-Type: multipart/form-data
 单张上限：MAX_UPLOAD_MB（默认 20MB）
 ```
 ```json
-{ "data": [ { "id": "a_1", "originalName": "IMG_001.jpg", "thumbUrl": "/thumbs/a_1.webp",
+{ "data": [ { "id": "a_1", "originalName": "IMG_001.jpg", "thumbUrl": "/uploads/thumbs/a_1.webp",
               "width": 4032, "height": 3024 } ] }
 ```
 > 后端处理：存原图 → sharp 读原图元数据（宽高 + 解码校验）→ exifr 提拍摄时间/经纬度/相机 → 生成 600px 缩略图 → 调 AI 服务 `/embed` 拿人脸和图片向量 → 落库。
@@ -90,7 +90,7 @@ Content-Type: multipart/form-data
 ```json
 {
   "data": [
-    { "id": "a_1", "thumbUrl": "/thumbs/a_1.webp", "takenAt": "2026-11-17T10:00:00.000Z",
+    { "id": "a_1", "thumbUrl": "/uploads/thumbs/a_1.webp", "takenAt": "2026-11-17T10:00:00.000Z",
       "lat": 30.27, "lng": 120.15, "cameraModel": "iPhone 15", "isFavorite": false }
   ],
   "meta": { "page": 1, "pageSize": 50, "total": 132 }

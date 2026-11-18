@@ -23,7 +23,7 @@ shiyi/data/app.db        ← 整个数据库就是这一个文件（几十 KB ~ 
 |---|---|---|
 | 结构化数据（用户/照片记录/人物/相册/分享） | `data/app.db` | 一个 SQLite 文件 |
 | 原图 | `data/uploads/` | 文件名是随机 UUID |
-| 缩略图 | `data/thumbs/` | 600px webp，由 sharp 生成 |
+| 缩略图 | `data/uploads/thumbs/` | 600px webp，由 sharp 生成；对外 URL `/uploads/thumbs/...` |
 | AI 向量（人脸 / 图片向量） | `ai/data/index.json` | AI 服务自己维护，不进数据库 |
 
 > `data/` 和 `ai/data/` 都在 `.gitignore` 里，**不会被提交到仓库**。
