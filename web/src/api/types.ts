@@ -22,6 +22,8 @@ export type Person = {
   id: string
   name: string | null
   coverAssetId?: string | null
+  /** 封面照片里的人脸框 [x, y, w, h]，归一化到 0~1，用于裁出人脸做头像 */
+  coverFace?: number[] | null
   faceCount: number
 }
 
