@@ -52,7 +52,7 @@ model Person {
   id           String   @id @default(cuid())
   ownerId      String
   /// AI 服务里的人脸分组 id，用于和 Python 服务对齐
-  aiPersonId   String   @unique
+  aiPersonId   String
   name         String?
   coverAssetId String?
   faceCount    Int      @default(0)
@@ -61,6 +61,7 @@ model Person {
   owner User          @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   faces AssetPerson[]
 
+  @@unique([ownerId, aiPersonId])
   @@index([ownerId])
 }
 

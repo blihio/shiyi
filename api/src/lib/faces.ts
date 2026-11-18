@@ -11,7 +11,7 @@ export async function syncFacesFromAi(ownerId: string, assetId: string, result: 
     const key = face.personKey
     if (!key) continue
 
-    let person = await prisma.person.findUnique({ where: { aiPersonId: key } })
+    let person = await prisma.person.findFirst({ where: { ownerId, aiPersonId: key } })
     if (!person) {
       person = await prisma.person.create({
         data: { ownerId, aiPersonId: key, coverAssetId: assetId, faceCount: 0 },
