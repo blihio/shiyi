@@ -10,6 +10,13 @@ import type { Album, AlbumDetailData, Asset, MapPoint, Person, SearchHit, ShareR
 const PAGE_SIZE = 60
 const PEOPLE_KEY = ['people']
 const ALBUMS_KEY = ['albums']
+const MAP_POINTS_KEY = ['map-points']
+const MAP_ASSETS_KEY = ['map-assets']
+
+function nextAssetPage({ data, meta }: Awaited<ReturnType<typeof apiPage<Asset>>>) {
+  const loaded = (meta.page - 1) * meta.pageSize + data.length
+  return loaded < meta.total ? meta.page + 1 : undefined
+}
 
 /**
  * 照片列表，可按人物查询。
@@ -26,10 +33,7 @@ export function useAssets(personId?: string) {
       if (personId) params.set('personId', personId)
       return apiPage<Asset>(`/assets?${params}`, { signal })
     },
-    getNextPageParam: (lastPage) => {
-      const loaded = (lastPage.meta.page - 1) * lastPage.meta.pageSize + lastPage.data.length
-      return loaded < lastPage.meta.total ? lastPage.meta.page + 1 : undefined
-    },
+    getNextPageParam: nextAssetPage,
   })
 }
 
@@ -82,6 +86,8 @@ export function useUploadAssets() {
       uploadWithProgress(files, onProgress),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['assets'] })
+      void queryClient.invalidateQueries({ queryKey: MAP_POINTS_KEY })
+      void queryClient.invalidateQueries({ queryKey: MAP_ASSETS_KEY })
       // AI 索引在后台写入，稍后刷新人物分组和搜索缓存。
       window.setTimeout(() => {
         void queryClient.invalidateQueries({ queryKey: ['assets'] })
@@ -170,7 +176,27 @@ export function useDeleteAlbum() {
 /** 地图上有 GPS 的照片聚合点 */
 export function useMapPoints() {
   return useQuery({
-    queryKey: ['map-points'],
+    queryKey: MAP_POINTS_KEY,
     queryFn: ({ signal }) => api<MapPoint[]>('/map/points', { signal }),
+  })
+}
+
+export function useMapAssets(point: MapPoint | null) {
+  const filter = point?.city ? { city: point.city } : point && { lat: point.lat, lng: point.lng }
+  return useInfiniteQuery({
+    queryKey: [...MAP_ASSETS_KEY, filter],
+    enabled: point !== null,
+    initialPageParam: 1,
+    queryFn: ({ pageParam, signal }) => {
+      const params = new URLSearchParams({ page: String(pageParam), pageSize: String(PAGE_SIZE) })
+      if (point?.city) {
+        params.set('city', point.city)
+      } else if (point) {
+        params.set('lat', String(point.lat))
+        params.set('lng', String(point.lng))
+      }
+      return apiPage<Asset>(`/map/assets?${params}`, { signal })
+    },
+    getNextPageParam: nextAssetPage,
   })
 }

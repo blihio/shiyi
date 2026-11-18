@@ -22,7 +22,7 @@ export default function AlbumDetail() {
   const [picked, setPicked] = useState<Set<string>>(new Set())
   const [pickerError, setPickerError] = useState<string | null>(null)
 
-  // 选择器里列出所有照片
+  // 选图沿用时间轴的分页，已选 ID 独立于当前加载的页。
   const allAssetsQuery = useAssets()
   const allAssets = useMemo(
     () => allAssetsQuery.data?.pages.flatMap((p) => p.data) ?? [],
@@ -30,6 +30,12 @@ export default function AlbumDetail() {
   )
 
   const inAlbumIds = useMemo(() => new Set((album?.assets ?? []).map((a) => a.id)), [album])
+
+  function openPicker() {
+    setPicked(new Set())
+    setPickerError(null)
+    setPickerOpen(true)
+  }
 
   async function handleShare() {
     try {
@@ -125,11 +131,7 @@ export default function AlbumDetail() {
 
         <div className="flex items-center gap-2">
           <button
-            onClick={() => {
-              setPickerOpen(true)
-              setPicked(new Set())
-              setPickerError(null)
-            }}
+            onClick={openPicker}
             className="rounded-md bg-slate-700 px-4 py-2 text-sm text-slate-100 hover:bg-slate-600"
           >
             添加照片
@@ -172,7 +174,7 @@ export default function AlbumDetail() {
           <div className="mb-1 text-sm text-slate-300">这个相册还是空的</div>
           <div className="mb-5 text-xs text-slate-500">点右上角「添加照片」从时间轴里挑几张进来</div>
           <button
-            onClick={() => setPickerOpen(true)}
+            onClick={openPicker}
             className="rounded-md bg-indigo-600 px-5 py-2.5 text-sm text-white hover:bg-indigo-500"
           >
             添加照片
@@ -214,11 +216,15 @@ export default function AlbumDetail() {
             {pickerError ? <div className="bg-rose-950/40 px-5 py-2 text-xs text-rose-300">{pickerError}</div> : null}
 
             <div className="flex-1 overflow-y-auto p-4">
+              {allAssetsQuery.isError && !allAssetsQuery.isFetchNextPageError && (
+                <div role="alert" className="mb-3 rounded-md bg-rose-950/40 p-3 text-sm text-rose-300">
+                  照片加载失败，{allAssetsQuery.error.message}
+                  <button type="button" onClick={() => void allAssetsQuery.refetch()} className="ml-2 text-indigo-300">重试</button>
+                </div>
+              )}
               {allAssetsQuery.isLoading ? (
                 <div className="py-16 text-center text-sm text-slate-500">加载照片中…</div>
-              ) : allAssets.length === 0 ? (
-                <div className="py-16 text-center text-sm text-slate-500">时间轴里还没有照片，先去上传</div>
-              ) : (
+              ) : allAssets.length > 0 ? (
                 <div className="grid grid-cols-[repeat(auto-fill,minmax(120px,1fr))] gap-1.5">
                   {allAssets.map((asset) => {
                     const already = inAlbumIds.has(asset.id)
@@ -227,7 +233,9 @@ export default function AlbumDetail() {
                       <button
                         key={asset.id}
                         type="button"
-                        disabled={already}
+                        disabled={already || addAssets.isPending}
+                        aria-label={asset.originalName || '照片 ' + asset.id}
+                        aria-pressed={isPicked}
                         onClick={() => togglePick(asset.id)}
                         className={`relative aspect-square overflow-hidden rounded-md border-2 transition ${
                           already
@@ -251,6 +259,20 @@ export default function AlbumDetail() {
                       </button>
                     )
                   })}
+                </div>
+              ) : allAssetsQuery.data && (
+                <div className="py-16 text-center text-sm text-slate-500">时间轴里还没有照片，先去上传</div>
+              )}
+              {allAssetsQuery.hasNextPage && (
+                <div className="mt-4 text-center">
+                  <button
+                    type="button"
+                    disabled={allAssetsQuery.isFetching || addAssets.isPending}
+                    onClick={() => void allAssetsQuery.fetchNextPage()}
+                    className="rounded-md bg-slate-800 px-4 py-2 text-sm text-slate-100 hover:bg-slate-700 disabled:opacity-50"
+                  >
+                    {allAssetsQuery.isFetchingNextPage ? '正在加载…' : allAssetsQuery.isFetchNextPageError ? '重试加载更多' : '加载更多照片'}
+                  </button>
                 </div>
               )}
             </div>
