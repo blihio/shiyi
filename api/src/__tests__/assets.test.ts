@@ -49,6 +49,21 @@ describe('assets', () => {
     expect(detail.body.data.height).toBe(ORIGINAL_HEIGHT)
   })
 
+  it('非白名单扩展名直接返回 400', async () => {
+    const token = await register('ext@test.local')
+
+    const res = await request(app)
+      .post('/api/assets')
+      .set('Authorization', `Bearer ${token}`)
+      .attach('files', Buffer.from('hello'), {
+        filename: 'note.txt',
+        contentType: 'text/plain',
+      })
+
+    expect(res.status).toBe(400)
+    expect(res.body.error.code).toBe('INVALID_FILE_TYPE')
+  })
+
   it('伪造图片类型返回 400 INVALID_FILE_TYPE', async () => {
     const token = await register('fake@test.local')
 
