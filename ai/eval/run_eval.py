@@ -2,7 +2,7 @@
 # 中文语义检索效果评测：算 Recall@10
 #
 # 用法：
-#   1. 先用真实照片跑一遍上传（让 ai/data/index.json 里有向量）
+#   1. 先用真实照片跑一遍上传（让 ai/data/index.real.json 里有向量）
 #   2. 把每张照片和一个主题对应起来，写进 labels.json（格式见下）
 #   3. python eval/run_eval.py
 #
@@ -30,7 +30,7 @@ def post(path: str, payload: dict):
 
 
 def main() -> None:
-    labels_path = os.path.join(HERE, "labels.json")
+    labels_path = os.getenv("EVAL_LABELS_PATH", os.path.join(HERE, "labels.json"))
     if not os.path.exists(labels_path):
         print("缺少 eval/labels.json —— 先按 README 的格式标注一批照片再跑")
         sys.exit(1)
@@ -38,17 +38,21 @@ def main() -> None:
     with open(labels_path, "r", encoding="utf-8") as f:
         cases = json.load(f)["queries"]
 
-    hit = 0
+    recalls = []
     for case in cases:
+        expected = set(case["expect"])
+        if not expected:
+            continue
         result = post("/search", {"query": case["q"], "topK": 10})
         got = {r["assetId"] for r in result["results"]}
-        expected = set(case["expect"])
-        ok = bool(got & expected)
-        hit += 1 if ok else 0
-        print(f"[{'命中' if ok else '未命中'}] {case['q']} → {len(got & expected)}/{len(expected)}")
+        matched = len(got & expected)
+        recalls.append(matched / len(expected))
+        print(f"[{'命中' if matched else '未命中'}] {case['q']} → {matched}/{len(expected)}")
 
-    recall = hit / max(len(cases), 1)
-    print(f"\nRecall@10 = {recall:.1%}  ({hit}/{len(cases)})")
+    if not recalls:
+        sys.exit("评测集没有包含相关照片的查询")
+    recall = sum(recalls) / len(recalls)
+    print(f"\nRecall@10 = {recall:.1%}（{len(recalls)} 条查询的平均召回率）")
 
 
 if __name__ == "__main__":

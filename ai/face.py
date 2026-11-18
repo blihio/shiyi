@@ -6,27 +6,32 @@
 
 import hashlib
 import os
+from functools import cache
+from pathlib import Path
 
 import numpy as np
 
 MOCK = os.getenv("MOCK_AI", "1") == "1"
 DIM = 512
-MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
-
-_analyzer = None
 
 
-def _load_real_model():
-    global _analyzer
-    if _analyzer is not None:
-        return _analyzer
+@cache
+def load_real_model():
     from insightface.app import FaceAnalysis  # type: ignore
 
-    # root 指向 ai/models，配合 download_models.py 预下载的模型，断网也能启动
-    app = FaceAnalysis(name="buffalo_l", root=MODELS_DIR, providers=["CPUExecutionProvider"])
-    app.prepare(ctx_id=-1, det_size=(640, 640))
-    _analyzer = app
-    return _analyzer
+    root = Path(__file__).resolve().parent / "models"
+    if not (root / "models" / "buffalo_l").is_dir() and (root / "insightface" / "models" / "buffalo_l").is_dir():
+        root /= "insightface"
+    analyzer = FaceAnalysis(
+        name="buffalo_l",
+        root=str(root),
+        allowed_modules=["detection", "recognition"],
+        providers=["CPUExecutionProvider"],
+    )
+    if "recognition" not in analyzer.models:
+        raise RuntimeError("buffalo_l face recognition model is missing")
+    analyzer.prepare(ctx_id=-1, det_size=(640, 640))
+    return analyzer
 
 
 def _fake_vector(seed: str, dim: int = DIM) -> list[float]:
@@ -57,24 +62,19 @@ def detect_faces(image_path: str) -> list[dict]:
             )
         return faces
 
-    try:
-        from PIL import Image  # type: ignore
-        import numpy as np  # 已导入
+    from PIL import Image, ImageOps  # type: ignore
 
-        app = _load_real_model()
-        img = np.asarray(Image.open(image_path).convert("RGB"))[:, :, ::-1]  # RGB -> BGR
-        detected = app.get(img)
-        faces = []
-        for face in detected:
-            bbox = face.bbox.astype(int).tolist()  # [x1, y1, x2, y2]
-            x1, y1, x2, y2 = bbox
-            faces.append(
-                {
-                    "bbox": [x1, y1, x2 - x1, y2 - y1],
-                    "vec": face.embedding.astype(float).tolist(),
-                }
-            )
-        return faces
-    except Exception as exc:
-        print(f"[face] 真实模型不可用，返回空结果：{exc}")
-        return []
+    with Image.open(image_path) as image:
+        rgb = ImageOps.exif_transpose(image).convert("RGB")
+    bgr = np.asarray(rgb)[:, :, ::-1].copy()
+
+    faces = []
+    for face in load_real_model().get(bgr):
+        x1, y1, x2, y2 = face.bbox.astype(int).tolist()
+        faces.append(
+            {
+                "bbox": [x1, y1, x2 - x1, y2 - y1],
+                "vec": face.embedding.astype(float).tolist(),
+            }
+        )
+    return faces

@@ -24,12 +24,15 @@ def _cosine_distance(a: list[float], b: list[float]) -> float:
     return 1.0 - sim
 
 
-def assign_person(store, asset_id: str, vec: list[float]) -> str:
+def assign_person(store, asset_id: str, vec: list[float], owner_id: str | None, legacy_ids: set[str]) -> str:
     """返回这个人脸所属的 personKey"""
     best_key = None
     best_dist = 1.0
 
     for key, person in store.persons.items():
+        owner = person.get("ownerId")
+        if owner != owner_id and not (owner is None and key in legacy_ids):
+            continue
         dist = _cosine_distance(vec, person["centroid"])
         if dist < best_dist:
             best_dist = dist
@@ -37,6 +40,7 @@ def assign_person(store, asset_id: str, vec: list[float]) -> str:
 
     if best_key is not None and best_dist <= THRESHOLD:
         person = store.persons[best_key]
+        person["ownerId"] = owner_id
         n = person["count"]
         centroid = (np.asarray(person["centroid"]) * n + np.asarray(vec)) / (n + 1)
         person["centroid"] = centroid.tolist()
@@ -46,6 +50,7 @@ def assign_person(store, asset_id: str, vec: list[float]) -> str:
 
     new_key = f"ai_p_{uuid.uuid4().hex[:8]}"
     store.persons[new_key] = {
+        "ownerId": owner_id,
         "centroid": list(vec),
         "count": 1,
         "assets": [asset_id],

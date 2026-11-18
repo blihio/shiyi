@@ -78,7 +78,7 @@ Content-Type: multipart/form-data
 { "data": [ { "id": "a_1", "originalName": "IMG_001.jpg", "thumbUrl": "/thumbs/a_1.webp",
               "width": 4032, "height": 3024 } ] }
 ```
-> 后端处理：存原图 → sharp 读原图元数据（宽高 + 解码校验）→ exifr 提拍摄时间/经纬度/相机 → 生成 600px 缩略图 → 调 AI 服务 `/embed` 拿人脸和图片向量 → 落库。
+> 后端处理：存原图 → sharp 校验并读取原图显示尺寸 → 提取 EXIF、生成 600px 缩略图并保存照片信息 → 后台调 AI `/embed` 并保存人物关系。
 > `width` / `height` 是**原图显示尺寸**（不是缩略图尺寸）；EXIF orientation 5~8 会交换宽高。
 > AI 服务不可用时**不要报错**，照片照常保存，只是没有人物和搜索数据。
 > 非白名单类型、伪造 MIME、无法解码的文件返回 `400 INVALID_FILE_TYPE`，并删除已落盘的文件。
@@ -103,6 +103,14 @@ Content-Type: multipart/form-data
             "cameraModel": "iPhone 15", "width": 4032, "height": 3024, "persons": [ { "id": "p_1", "name": "张三" } ] } }
 ```
 
+### `GET /api/assets/:id/analysis` AI 分析摘要
+
+```json
+{ "data": { "mode": "real", "clipDim": 512, "faces": [{ "bbox": [180, 59, 90, 120], "dim": 512 }] } }
+```
+
+`bbox` 为原图按 EXIF 转正后的 `[x, y, 宽, 高]`，旧索引中缺失的框返回 `null`。无脸照片的 `faces` 为空数组。没有分析结果时返回 `{ "data": null }`。照片不存在或不属于当前账号时返回 `404`，AI 服务不可用时返回 `503`。
+
 ### `PATCH /api/assets/:id` 收藏
 ```json
 { "isFavorite": true }
@@ -112,6 +120,7 @@ Content-Type: multipart/form-data
 ```json
 { "data": { "ok": true } }
 ```
+删除照片记录及关联，更新受影响的人物和相册封面，并在后台清理 AI 索引。原图和缩略图继续保留。
 
 ---
 
@@ -119,9 +128,10 @@ Content-Type: multipart/form-data
 
 ### `GET /api/people`
 ```json
-{ "data": [ { "id": "p_1", "name": "张三", "coverAssetId": "a_9", "faceCount": 23 } ] }
+{ "data": [ { "id": "p_1", "name": "张三", "coverAssetId": "a_9", "coverFace": [0.2, 0.1, 0.3, 0.4], "faceCount": 23 } ] }
 ```
 > `name` 为 `null` 时前端显示"未命名人物"。
+> `coverFace` 为可选字段，格式是相对封面图片宽高的 `[x, y, 宽, 高]`，描述以人脸为中心的正方形头像裁剪区域。
 
 ### `PATCH /api/people/:id` 命名
 ```json
@@ -148,6 +158,10 @@ Content-Type: multipart/form-data
 ```
 > 没有 GPS 的照片不返回。`count` 是这个坐标附近的照片数，前端用它决定标记点大小。
 
+### `GET /api/map/assets?city=杭州&page=1&pageSize=50`
+
+返回该城市的有 GPS 照片，响应格式与照片列表相同。城市使用点位接口相同的归属规则。
+
 ---
 
 ## 5. 搜索（Search）
@@ -156,7 +170,7 @@ Content-Type: multipart/form-data
 ```json
 { "data": [ { "assetId": "a_3", "score": 0.82, "asset": { "id": "a_3", "thumbUrl": "..." } } ] }
 ```
-> 后端把 `q` 转发给 AI 服务 `POST /search`，拿回 assetId 列表再查库。
+> 后端向 AI 服务传递当前账号的候选照片 ID，只返回当前账号的结果。AI 服务不可用或暂无语义结果时，按文件名和城市匹配，分数为 0。
 
 ---
 
@@ -176,8 +190,17 @@ Content-Type: multipart/form-data
 ```json
 { "assetIds": ["a_1", "a_2"] }
 ```
+重复的照片只关联一次。相册和照片均按通用鉴权规则校验所属账号。
 
 ### `GET /api/albums/:id` 相册详情（返回照片列表）
+
+```json
+{ "data": { "id": "al_1", "name": "毕业旅行", "coverAssetId": "a_1", "count": 1, "assets": [{ "id": "a_1", "fileUrl": "/uploads/a_1.jpg" }] } }
+```
+
+### `DELETE /api/albums/:id`
+
+删除当前账号的相册，解除照片关联并使分享失效。照片继续保留。返回 `{ "data": { "ok": true } }`。
 
 ---
 
@@ -205,20 +228,38 @@ Content-Type: multipart/form-data
 ### `POST /embed`
 ```json
 // 请求
-{ "assetId": "a_1", "imagePath": "C:/.../data/uploads/a_1.jpg" }
+{ "assetId": "a_1", "imagePath": "C:/.../data/uploads/a_1.jpg", "ownerId": "u_1", "legacyPersonIds": [] }
 // 返回
 { "assetId": "a_1",
   "faces": [ { "bbox": [x, y, w, h], "vec": [0.12, ...512 个数], "personKey": "p_1" } ],
   "clipVec": [0.05, ...512 个数] }
 ```
+`ownerId`、`legacyPersonIds` 为可选字段，Node 用它们限制人物归组到当前账号，并兼容旧人物索引。`personKey` 为 `null` 表示该人脸已从分组中拆出。
+
+### `GET /embeddings/:assetId`
+
+返回照片的分析摘要，格式与 `/api/assets/:id/analysis` 的 `data` 字段一致。未找到索引时返回 `null`。
+
+### `DELETE /embeddings/:assetId`
+
+清除照片的向量、分析摘要和人物关联，重复删除返回 `{ "ok": true }`。
 
 ### `POST /search`
 ```json
 // 请求
-{ "query": "海边日落", "topK": 20 }
+{ "query": "海边日落", "topK": 20, "assetIds": ["a_3"] }
 // 返回
 { "results": [ { "assetId": "a_3", "score": 0.82 } ] }
 ```
+`assetIds` 为可选候选 ID 列表。空数组表示无候选照片，省略表示查询整个索引。
+
+### `POST /persons/merge` / `POST /persons/split`
+
+分别接收 `{ "keepId": "ai_p_1", "mergeId": "ai_p_2" }` 和 `{ "personId": "ai_p_1", "assetId": "a_1" }`，使用 AI 分组 ID。返回 `{ "ok": true }`。
+
+### `POST /persons/cover-faces`
+
+接收 `{ "covers": [{ "personKey": "ai_p_1", "assetId": "a_1" }] }`，返回 `{ "boxes": [[x, y, 宽, 高]] }`。结果与输入顺序一致，找不到人脸框时返回 `null`。
 
 ### `GET /health`
 ```json

@@ -25,19 +25,20 @@ python -m uvicorn main:app --port 8000 --reload
 
 **先用这个模式把整站联调通，再去装真模型。**
 
-### 真实模式（要下载模型，约 2GB）
+### 真实模式（在 `ai/` 目录下运行）
 
 ```powershell
+python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
 python -m pip install -r requirements-models.txt
-$env:MOCK_AI=0
-python -m uvicorn main:app --port 8000 --reload
+python download_models.py
+$env:MOCK_AI = '0'
+python -m uvicorn main:app --host 127.0.0.1 --port 8000
 ```
 
-- 首次启动会自动下载：
-  - `buffalo_l`（insightface 模型包，约 300MB）
-  - `OFA-Sys/chinese-clip-vit-base-patch16`（约 600MB）
-- **提前下载好**，答辩现场不要依赖网络
-- CPU 推理：单张图约 0.3~0.5 秒
+推荐使用 Python 3.12 的虚拟环境，详见 [SETUP.md](SETUP.md)。
+服务在启动时加载 InsightFace `buffalo_l` 和 `OFA-Sys/chinese-clip-vit-base-patch16`，首次下载模型约 1 GB。缓存位于 `ai/models/`。如果已手动准备模型，可以将 InsightFace 的 `det_10g.onnx` 和 `w600k_r50.onnx` 放入 `ai/models/models/buffalo_l/`，将 Chinese-CLIP 的 `pytorch_model.bin`、`config.json`、`preprocessor_config.json` 和 `vocab.txt` 放入 `ai/models/chinese-clip/`。
+
+两套模型加载完成后，`/health` 返回 `mode: real`。模型加载失败时，启动日志会报告错误。
 
 ---
 
@@ -58,7 +59,7 @@ python -m uvicorn main:app --port 8000 --reload
 
 ## 数据存在哪
 
-`ai/data/index.json`（不进 git）。结构：
+演示模式使用 `ai/data/index.json`，真实模式使用 `ai/data/index.real.json`。两个索引文件均由服务生成。
 
 ```json
 {
@@ -73,17 +74,32 @@ python -m uvicorn main:app --port 8000 --reload
 
 ---
 
+## W1 验收
+
+启动真实模式后，在同一台电脑的 PowerShell 里运行下列命令。把 `$photo` 改为一张清晰单人照片的绝对路径。
+
+```powershell
+$photo = 'C:/path/to/photo.jpg'
+$body = @{ assetId = 'w1-test'; imagePath = $photo } | ConvertTo-Json
+$result = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/embed' -Method Post `
+    -ContentType 'application/json; charset=utf-8' -Body $body
+
+$result.mode
+$result.faces.Count
+$result.faces[0].bbox -join ', '
+$result.faces[0].vec.Count
+$result.clipVec.Count
+```
+
+验收时应看到 `real`、`1`、四个框坐标，以及两个 `512`。人脸框按 EXIF 转正后的图像计算，格式为 `[x, y, 宽, 高]`。
+
 ## 调试命令
 
 ```powershell
-# 看服务是否正常
-curl http://127.0.0.1:8000/health
-
-# 对一张图跑一遍（Windows 注意路径用正斜杠或双反斜杠）
-curl -X POST http://127.0.0.1:8000/embed -H "Content-Type: application/json" -d "{\"assetId\":\"a_test\",\"imagePath\":\"C:/path/to/photo.jpg\"}"
-
-# 搜索
-curl -X POST http://127.0.0.1:8000/search -H "Content-Type: application/json" -d "{\"query\":\"海边日落\",\"topK\":10}"
+Invoke-RestMethod 'http://127.0.0.1:8000/health'
+$body = @{ query = '海边日落'; topK = 10 } | ConvertTo-Json
+Invoke-RestMethod -Uri 'http://127.0.0.1:8000/search' -Method Post `
+    -ContentType 'application/json; charset=utf-8' -Body $body
 ```
 
 ---

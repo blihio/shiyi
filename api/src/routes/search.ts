@@ -1,10 +1,11 @@
 // 负责人：D
-// 语义搜索：把中文描述转发给 AI 服务，拿回资产 id 列表再查库
-// 接口定义见 docs/api-contract.md 第 5 节
+// 在当前账号的照片范围内搜索，AI 无结果时匹配文件名和城市。
 
 import { Router } from 'express'
 
 import { semanticSearch } from '../lib/ai'
+import { assetDto } from '../lib/asset-dto'
+import { ApiError } from '../lib/errors'
 import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
 
@@ -12,45 +13,33 @@ export const searchRouter = Router()
 
 searchRouter.get('/', requireAuth, async (req, res, next) => {
   try {
-    const q = typeof req.query.q === 'string' ? req.query.q.trim() : ''
-    if (!q) {
-      res.status(400).json({ error: { code: 'INVALID_PARAMS', message: '搜索词不能为空' } })
-      return
-    }
+    const query = typeof req.query.q === 'string' ? req.query.q.trim() : ''
+    if (!query) throw new ApiError(400, 'INVALID_PARAMS', '搜索词不能为空')
     const topK = Math.min(50, Number(req.query.topK ?? 20))
-
-    const aiResult = await semanticSearch(q, topK)
-    if (!aiResult || aiResult.results.length === 0) {
-      // AI 服务没起或没有命中：退化成按文件名/城市模糊匹配，保证页面不空白
-      const fallback = await prisma.asset.findMany({
-        where: { ownerId: req.userId!, originalName: { contains: q } },
-        take: topK,
-      })
-      res.json({
-        data: fallback.map((a) => ({
-          assetId: a.id,
-          score: 0,
-          asset: { id: a.id, thumbUrl: a.thumbPath ?? undefined, originalName: a.originalName ?? undefined },
-        })),
-      })
+    const assets = await prisma.asset.findMany({
+      where: { ownerId: req.userId! }, orderBy: [{ takenAt: 'desc' }, { id: 'desc' }],
+    })
+    if (!assets.length) {
+      res.json({ data: [] })
       return
     }
 
-    const ids = aiResult.results.map((r) => r.assetId)
-    const assets = await prisma.asset.findMany({ where: { id: { in: ids }, ownerId: req.userId! } })
-    const byId = new Map(assets.map((a) => [a.id, a]))
-    const scoreById = new Map(aiResult.results.map((r) => [r.assetId, r.score]))
-
-    res.json({
-      data: ids
-        .map((id) => byId.get(id))
-        .filter((a): a is NonNullable<typeof a> => Boolean(a))
-        .map((a) => ({
-          assetId: a.id,
-          score: scoreById.get(a.id) ?? 0,
-          asset: { id: a.id, thumbUrl: a.thumbPath ?? undefined, originalName: a.originalName ?? undefined },
-        })),
+    const ai = await semanticSearch(query, topK, assets.map((asset) => asset.id))
+    const byId = new Map(assets.map((asset) => [asset.id, asset]))
+    const results = (ai?.results ?? []).flatMap(({ assetId, score }) => {
+      const asset = byId.get(assetId)
+      return asset ? [{ assetId, score, asset: assetDto(asset) }] : []
     })
+    if (results.length) {
+      res.json({ data: results })
+      return
+    }
+
+    const term = query.toLowerCase()
+    const matches = assets.map(assetDto).filter((asset) =>
+      asset.originalName?.toLowerCase().includes(term) || asset.city?.includes(query),
+    )
+    res.json({ data: matches.slice(0, topK).map((asset) => ({ assetId: asset.id, score: 0, asset })) })
   } catch (err) {
     next(err)
   }

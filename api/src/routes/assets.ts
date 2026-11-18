@@ -12,10 +12,12 @@ import sharp from 'sharp'
 import type { Prisma } from '@prisma/client'
 
 import { MAX_UPLOAD_MB, UPLOAD_DIR } from '../env'
-import { embedImage } from '../lib/ai'
+import { deleteEmbedding, getEmbeddingSummary } from '../lib/ai'
+import { assetDto } from '../lib/asset-dto'
 import { ApiError, InvalidFileTypeError } from '../lib/errors'
-import { guessCity, readExif } from '../lib/exif'
-import { syncFacesFromAi } from '../lib/faces'
+import { readExif } from '../lib/exif'
+import { queueFaceAnalysis, queuePhotoJob, refreshPerson } from '../lib/faces'
+import { pagination } from '../lib/pagination'
 import { prisma } from '../lib/prisma'
 import { publicUrl } from '../lib/storage'
 import { makeThumb } from '../lib/thumb'
@@ -83,35 +85,6 @@ async function removeFiles(files: Express.Multer.File[]) {
   await Promise.all(files.map((file) => fs.unlink(file.path).catch(() => undefined)))
 }
 
-function toDto(a: {
-  id: string
-  thumbPath: string | null
-  filePath: string
-  originalName: string | null
-  takenAt: Date | null
-  lat: number | null
-  lng: number | null
-  cameraModel: string | null
-  width: number | null
-  height: number | null
-  isFavorite: boolean
-}) {
-  return {
-    id: a.id,
-    thumbUrl: a.thumbPath ?? undefined,
-    fileUrl: a.filePath,
-    originalName: a.originalName ?? undefined,
-    takenAt: a.takenAt?.toISOString(),
-    lat: a.lat ?? undefined,
-    lng: a.lng ?? undefined,
-    city: guessCity(a.lat, a.lng) ?? undefined,
-    cameraModel: a.cameraModel ?? undefined,
-    width: a.width ?? undefined,
-    height: a.height ?? undefined,
-    isFavorite: a.isFavorite,
-  }
-}
-
 /** POST /api/assets —— 上传（可多张） */
 assetsRouter.post('/', requireAuth, upload.array('files', 20), async (req, res, next) => {
   const files = (req.files ?? []) as Express.Multer.File[]
@@ -163,17 +136,9 @@ assetsRouter.post('/', requireAuth, upload.array('files', 20), async (req, res, 
         where: { id: asset.id },
         data: { thumbPath: thumb ? publicUrl(thumb.thumbAbsPath) : null },
       })
-      created.push(toDto(updated))
+      created.push(assetDto(updated))
 
-      // AI 处理放在后台，不要阻塞上传响应（AI 服务没起也不影响）
-      void (async () => {
-        try {
-          const result = await embedImage(asset.id, file.path)
-          await syncFacesFromAi(req.userId!, asset.id, result)
-        } catch (err) {
-          console.error('[ai] 后台处理失败', asset.id, err)
-        }
-      })()
+      queueFaceAnalysis(req.userId!, asset.id, file.path)
     }
 
     res.json({ data: created })
@@ -187,32 +152,31 @@ assetsRouter.post('/', requireAuth, upload.array('files', 20), async (req, res, 
 /** GET /api/assets?page&pageSize&month&personId&albumId */
 assetsRouter.get('/', requireAuth, async (req, res, next) => {
   try {
-    const page = Math.max(1, Number(req.query.page ?? 1))
-    const pageSize = Math.min(100, Math.max(1, Number(req.query.pageSize ?? 50)))
-    const { month, personId, albumId } = req.query as Record<string, string | undefined>
+    const { page, pageSize, skip } = pagination(req.query)
+    const { month, personId, albumId } = req.query
+    const ownerId = req.userId!
+    const where: Prisma.AssetWhereInput = { ownerId }
 
-    const where: Prisma.AssetWhereInput = { ownerId: req.userId! }
-
-    if (month && /^\d{4}-\d{2}$/.test(month)) {
+    if (typeof month === 'string' && /^\d{4}-(0[1-9]|1[0-2])$/.test(month)) {
       const start = new Date(`${month}-01T00:00:00.000Z`)
       const end = new Date(start)
       end.setUTCMonth(end.getUTCMonth() + 1)
       where.takenAt = { gte: start, lt: end }
     }
-    if (personId) where.persons = { some: { personId } }
-    if (albumId) where.albums = { some: { albumId } }
+    if (typeof personId === 'string' && personId) where.persons = { some: { personId, person: { ownerId } } }
+    if (typeof albumId === 'string' && albumId) where.albums = { some: { albumId, album: { ownerId } } }
 
     const [total, rows] = await Promise.all([
       prisma.asset.count({ where }),
       prisma.asset.findMany({
         where,
-        orderBy: { takenAt: 'desc' },
-        skip: (page - 1) * pageSize,
+        orderBy: [{ takenAt: 'desc' }, { id: 'desc' }],
+        skip,
         take: pageSize,
       }),
     ])
 
-    res.json({ data: rows.map(toDto), meta: { page, pageSize, total } })
+    res.json({ data: rows.map(assetDto), meta: { page, pageSize, total } })
   } catch (err) {
     next(err)
   }
@@ -223,7 +187,7 @@ assetsRouter.get('/:id', requireAuth, async (req, res, next) => {
   try {
     const asset = await prisma.asset.findFirst({
       where: { id: req.params.id, ownerId: req.userId! },
-      include: { persons: { include: { person: true } } },
+      include: { persons: { where: { person: { ownerId: req.userId! } }, include: { person: true } } },
     })
     if (!asset) {
       res.status(404).json({ error: { code: 'NOT_FOUND', message: '照片不存在' } })
@@ -231,10 +195,33 @@ assetsRouter.get('/:id', requireAuth, async (req, res, next) => {
     }
     res.json({
       data: {
-        ...toDto(asset),
+        ...assetDto(asset),
         persons: asset.persons.map((p) => ({ id: p.person.id, name: p.person.name })),
       },
     })
+  } catch (err) {
+    next(err)
+  }
+})
+
+/** GET /api/assets/:id/analysis */
+assetsRouter.get('/:id/analysis', requireAuth, async (req, res, next) => {
+  try {
+    const asset = await prisma.asset.findFirst({
+      where: { id: req.params.id, ownerId: req.userId! },
+      select: { id: true },
+    })
+    if (!asset) {
+      res.status(404).json({ error: { code: 'NOT_FOUND', message: '照片不存在' } })
+      return
+    }
+
+    const summary = await getEmbeddingSummary(asset.id)
+    if (!summary) {
+      res.status(503).json({ error: { code: 'AI_SERVICE_ERROR', message: '暂时无法连接 AI 服务' } })
+      return
+    }
+    res.json(summary)
   } catch (err) {
     next(err)
   }
@@ -261,11 +248,26 @@ assetsRouter.patch('/:id', requireAuth, async (req, res, next) => {
 /** DELETE /api/assets/:id */
 assetsRouter.delete('/:id', requireAuth, async (req, res, next) => {
   try {
-    const deleted = await prisma.asset.deleteMany({ where: { id: req.params.id, ownerId: req.userId! } })
-    if (deleted.count === 0) {
-      res.status(404).json({ error: { code: 'NOT_FOUND', message: '照片不存在' } })
-      return
-    }
+    const ownerId = req.userId!
+    const asset = await prisma.$transaction(async (tx) => {
+      const found = await tx.asset.findFirst({
+        where: { id: req.params.id, ownerId },
+        include: { persons: { select: { personId: true } } },
+      })
+      if (!found) throw new ApiError(404, 'NOT_FOUND', '照片不存在')
+      await tx.asset.delete({ where: { id: found.id } })
+
+      for (const { personId } of found.persons) await refreshPerson(tx, personId, ownerId)
+      const albums = await tx.album.findMany({ where: { ownerId, coverAssetId: found.id }, select: { id: true } })
+      for (const album of albums) {
+        const cover = await tx.albumAsset.findFirst({
+          where: { albumId: album.id, asset: { ownerId } }, orderBy: { asset: { takenAt: 'desc' } },
+        })
+        await tx.album.update({ where: { id: album.id }, data: { coverAssetId: cover?.assetId ?? null } })
+      }
+      return found
+    })
+    queuePhotoJob(asset.id, () => deleteEmbedding(asset.id))
     res.json({ data: { ok: true } })
   } catch (err) {
     next(err)

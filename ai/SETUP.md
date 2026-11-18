@@ -41,7 +41,7 @@ python -m pip install -r requirements-models.txt
 ```powershell
 python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
 # 然后再装剩下的
-python -m pip install insightface onnxruntime pillow transformers huggingface_hub
+python -m pip install -r requirements-models.txt
 ```
 
 ---
@@ -87,24 +87,7 @@ python check_env.py
 
 ## 4. 切到真实模式启动
 
-> **⚠️ 切换前先清理 mock 阶段的假数据**，否则真实向量和 hash 假向量混在同一个索引里，搜索排序会乱：
->
-> ```powershell
-> # 1. 停掉 AI 服务（Ctrl+C）
-> # 2. 备份并清空 mock 索引
-> Move-Item ai/data/index.json ai/data/index.mock.json -ErrorAction SilentlyContinue
-> # 3. 清掉 mock 阶段建的人物（都是假脸分出来的）
-> #    最省事的做法：清空数据库里的人物关系，然后重新上传照片
-> ```
->
-> **最干净的做法**（推荐，第一次切真实模式时做一次）：
-> ```powershell
-> # 停掉所有服务后
-> Remove-Item data\app.db, data\uploads\*, data\thumbs\* -Force
-> Remove-Item ai\data -Recurse -Force
-> npm run db:push      # 重建空库（演示账号会自动重建）
-> ```
-> 然后重新上传照片——这样人脸分组和向量索引全都是真实的。
+真实模式使用 `ai/data/index.real.json`，mock 模式使用 `ai/data/index.json`。如果演示库曾用 mock 模式上传，先停掉服务，备份 SQLite 和 AI 索引，把旧照片和缩略图移到本地归档目录，再清除旧照片和人物关联。登录账号可以保留。
 
 ```powershell
 cd ai

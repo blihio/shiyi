@@ -119,7 +119,8 @@ def check_service() -> None:
 
 def check_index() -> None:
     print("\n[5] 向量索引")
-    idx = os.path.join(HERE, "data", "index.json")
+    name = "index.json" if os.getenv("MOCK_AI", "1") == "1" else "index.real.json"
+    idx = os.path.join(HERE, "data", name)
     if os.path.exists(idx):
         size_kb = os.path.getsize(idx) / 1024
         try:

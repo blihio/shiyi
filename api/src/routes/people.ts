@@ -5,6 +5,8 @@
 import { Router } from 'express'
 
 import { mergePersons, splitPerson } from '../lib/ai'
+import { personCoverFaces, refreshPerson, runPhotoJob } from '../lib/faces'
+import { ApiError } from '../lib/errors'
 import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
 
@@ -13,12 +15,16 @@ export const peopleRouter = Router()
 /** GET /api/people */
 peopleRouter.get('/', requireAuth, async (req, res, next) => {
   try {
+    const ownerId = req.userId!
     const people = await prisma.person.findMany({
-      where: { ownerId: req.userId! },
+      where: { ownerId },
       orderBy: { faceCount: 'desc' },
     })
+    const coverFaces = await personCoverFaces(ownerId, people)
     res.json({
-      data: people.map((p) => ({ id: p.id, name: p.name, coverAssetId: p.coverAssetId, faceCount: p.faceCount })),
+      data: people.map((p) => ({
+        id: p.id, name: p.name, coverAssetId: p.coverAssetId, coverFace: coverFaces.get(p.id), faceCount: p.faceCount,
+      })),
     })
   } catch (err) {
     next(err)
@@ -52,30 +58,32 @@ peopleRouter.post('/merge', requireAuth, async (req, res, next) => {
   try {
     const { keepId, mergeId } = (req.body ?? {}) as { keepId?: string; mergeId?: string }
     if (!keepId || !mergeId) {
-      res.status(400).json({ error: { code: 'INVALID_PARAMS', message: '缺少 keepId 或 mergeId' } })
-      return
+      throw new ApiError(400, 'INVALID_PARAMS', '缺少 keepId 或 mergeId')
     }
+    const ownerId = req.userId!
+    await runPhotoJob(async () => {
+      const ids = await prisma.$transaction(async (tx) => {
+        const keep = await tx.person.findFirst({ where: { id: keepId, ownerId } })
+        const merge = await tx.person.findFirst({ where: { id: mergeId, ownerId } })
+        if (!keep || !merge) throw new ApiError(404, 'NOT_FOUND', '人物不存在')
+        if (keep.id === merge.id) return
 
-    const [keep, merge] = await Promise.all([
-      prisma.person.findFirst({ where: { id: keepId, ownerId: req.userId! } }),
-      prisma.person.findFirst({ where: { id: mergeId, ownerId: req.userId! } }),
-    ])
-    if (!keep || !merge) {
-      res.status(404).json({ error: { code: 'NOT_FOUND', message: '人物不存在' } })
-      return
-    }
-
-    const faces = await prisma.assetPerson.findMany({ where: { personId: mergeId } })
-    for (const f of faces) {
-      await prisma.assetPerson
-        .create({ data: { assetId: f.assetId, personId: keepId } })
-        .catch(() => undefined) // 已经有这个关联就跳过
-    }
-    await prisma.person.delete({ where: { id: mergeId } })
-    const count = await prisma.assetPerson.count({ where: { personId: keepId } })
-    await prisma.person.update({ where: { id: keepId }, data: { faceCount: count } })
-
-    void mergePersons(keep.aiPersonId, merge.aiPersonId)
+        const links = await tx.assetPerson.findMany({ where: { personId: merge.id, asset: { ownerId } } })
+        for (const { assetId } of links) {
+          await tx.assetPerson.upsert({
+            where: { assetId_personId: { assetId, personId: keep.id } },
+            create: { assetId, personId: keep.id },
+            update: {},
+          })
+        }
+        await tx.person.delete({ where: { id: merge.id } })
+        await refreshPerson(tx, keep.id, ownerId)
+        return { keep: keep.aiPersonId, merge: merge.aiPersonId }
+      })
+      if (ids && !(await mergePersons(ids.keep, ids.merge))?.ok) {
+        console.warn('[ai] 合并已保存到数据库，AI 索引同步失败', keepId, mergeId)
+      }
+    })
     res.json({ data: { ok: true } })
   } catch (err) {
     next(err)
@@ -87,20 +95,22 @@ peopleRouter.post('/:id/split', requireAuth, async (req, res, next) => {
   try {
     const { assetId } = (req.body ?? {}) as { assetId?: string }
     if (!assetId) {
-      res.status(400).json({ error: { code: 'INVALID_PARAMS', message: '缺少 assetId' } })
-      return
+      throw new ApiError(400, 'INVALID_PARAMS', '缺少 assetId')
     }
-    const person = await prisma.person.findFirst({ where: { id: req.params.id, ownerId: req.userId! } })
-    if (!person) {
-      res.status(404).json({ error: { code: 'NOT_FOUND', message: '人物不存在' } })
-      return
-    }
-
-    await prisma.assetPerson.deleteMany({ where: { personId: person.id, assetId } })
-    const count = await prisma.assetPerson.count({ where: { personId: person.id } })
-    await prisma.person.update({ where: { id: person.id }, data: { faceCount: count } })
-
-    void splitPerson(person.aiPersonId, assetId)
+    const ownerId = req.userId!
+    await runPhotoJob(async () => {
+      const aiPersonId = await prisma.$transaction(async (tx) => {
+        const person = await tx.person.findFirst({ where: { id: req.params.id, ownerId } })
+        if (!person) throw new ApiError(404, 'NOT_FOUND', '人物不存在')
+        const deleted = await tx.assetPerson.deleteMany({ where: { personId: person.id, assetId, asset: { ownerId } } })
+        if (!deleted.count) return
+        await refreshPerson(tx, person.id, ownerId)
+        return person.aiPersonId
+      })
+      if (aiPersonId && !(await splitPerson(aiPersonId, assetId))?.ok) {
+        console.warn('[ai] 拆分已保存到数据库，AI 索引同步失败', req.params.id, assetId)
+      }
+    })
     res.json({ data: { ok: true } })
   } catch (err) {
     next(err)

@@ -19,17 +19,18 @@ shareRouter.get('/:key', async (req, res, next) => {
       res.status(404).json({ error: { code: 'NOT_FOUND', message: '分享不存在或已失效' } })
       return
     }
-    if (share.expiresAt && share.expiresAt.getTime() < Date.now()) {
+    if (share.expiresAt && share.expiresAt.getTime() <= Date.now()) {
       res.status(404).json({ error: { code: 'NOT_FOUND', message: '分享链接已过期' } })
       return
     }
 
     await prisma.share.update({ where: { key: share.key }, data: { viewCount: { increment: 1 } } })
 
-    res.json({
+    const { album } = share
+    res.set('Cache-Control', 'no-store').json({
       data: {
-        album: { id: share.album.id, name: share.album.name },
-        assets: share.album.assets.map(({ asset }) => ({
+        album: { id: album.id, name: album.name },
+        assets: album.assets.filter(({ asset }) => asset.ownerId === album.ownerId).map(({ asset }) => ({
           id: asset.id,
           thumbUrl: asset.thumbPath ?? undefined,
           fileUrl: asset.filePath,

@@ -6,6 +6,8 @@ import { randomBytes } from 'node:crypto'
 
 import { Router } from 'express'
 
+import { assetDto } from '../lib/asset-dto'
+import { ApiError } from '../lib/errors'
 import { prisma } from '../lib/prisma'
 import { requireAuth } from '../middleware/auth'
 
@@ -29,13 +31,17 @@ albumsRouter.post('/', requireAuth, async (req, res, next) => {
 /** GET /api/albums */
 albumsRouter.get('/', requireAuth, async (req, res, next) => {
   try {
+    const ownerId = req.userId!
     const albums = await prisma.album.findMany({
-      where: { ownerId: req.userId! },
+      where: { ownerId },
       orderBy: { createdAt: 'desc' },
-      include: { _count: { select: { assets: true } } },
+      include: { assets: { where: { asset: { ownerId } }, select: { assetId: true } } },
     })
     res.json({
-      data: albums.map((a) => ({ id: a.id, name: a.name, coverAssetId: a.coverAssetId, count: a._count.assets })),
+      data: albums.map((album) => ({
+        id: album.id, name: album.name, count: album.assets.length,
+        coverAssetId: album.assets.find(({ assetId }) => assetId === album.coverAssetId)?.assetId ?? album.assets[0]?.assetId ?? null,
+      })),
     })
   } catch (err) {
     next(err)
@@ -45,27 +51,30 @@ albumsRouter.get('/', requireAuth, async (req, res, next) => {
 /** POST /api/albums/:id/assets */
 albumsRouter.post('/:id/assets', requireAuth, async (req, res, next) => {
   try {
-    const album = await prisma.album.findFirst({ where: { id: req.params.id, ownerId: req.userId! } })
-    if (!album) {
-      res.status(404).json({ error: { code: 'NOT_FOUND', message: '相册不存在' } })
-      return
-    }
     const { assetIds } = (req.body ?? {}) as { assetIds?: unknown }
-    if (!Array.isArray(assetIds)) {
-      res.status(400).json({ error: { code: 'INVALID_PARAMS', message: 'assetIds 必须是数组' } })
-      return
-    }
+    if (!Array.isArray(assetIds)) throw new ApiError(400, 'INVALID_PARAMS', 'assetIds 必须是数组')
+    const ids = [...new Set(assetIds.filter((id): id is string => typeof id === 'string'))]
+    const ownerId = req.userId!
+    const count = await prisma.$transaction(async (tx) => {
+      const album = await tx.album.findFirst({ where: { id: req.params.id, ownerId } })
+      if (!album) throw new ApiError(404, 'NOT_FOUND', '相册不存在')
+      const owned = await tx.asset.count({ where: { ownerId, id: { in: ids } } })
+      if (owned !== ids.length) throw new ApiError(404, 'NOT_FOUND', '照片不存在')
 
-    for (const assetId of assetIds) {
-      if (typeof assetId !== 'string') continue
-      await prisma.albumAsset
-        .create({ data: { albumId: album.id, assetId } })
-        .catch(() => undefined) // 重复添加直接忽略
-    }
-    const count = await prisma.albumAsset.count({ where: { albumId: album.id } })
-    if (!album.coverAssetId) {
-      await prisma.album.update({ where: { id: album.id }, data: { coverAssetId: String(assetIds[0]) } })
-    }
+      const links = await tx.albumAsset.findMany({
+        where: { albumId: album.id, asset: { ownerId } }, select: { assetId: true },
+      })
+      const current = new Set(links.map(({ assetId }) => assetId))
+      const additions = ids.filter((assetId) => !current.has(assetId))
+      if (additions.length) {
+        await tx.albumAsset.createMany({ data: additions.map((assetId) => ({ albumId: album.id, assetId })) })
+      }
+      if (!album.coverAssetId || !current.has(album.coverAssetId)) {
+        const coverAssetId = links[0]?.assetId ?? additions[0] ?? null
+        await tx.album.update({ where: { id: album.id }, data: { coverAssetId } })
+      }
+      return current.size + additions.length
+    })
     res.json({ data: { ok: true, count } })
   } catch (err) {
     next(err)
@@ -75,9 +84,10 @@ albumsRouter.post('/:id/assets', requireAuth, async (req, res, next) => {
 /** GET /api/albums/:id */
 albumsRouter.get('/:id', requireAuth, async (req, res, next) => {
   try {
+    const ownerId = req.userId!
     const album = await prisma.album.findFirst({
-      where: { id: req.params.id, ownerId: req.userId! },
-      include: { assets: { include: { asset: true } } },
+      where: { id: req.params.id, ownerId },
+      include: { assets: { where: { asset: { ownerId } }, include: { asset: true }, orderBy: { asset: { takenAt: 'desc' } } } },
     })
     if (!album) {
       res.status(404).json({ error: { code: 'NOT_FOUND', message: '相册不存在' } })
@@ -87,14 +97,9 @@ albumsRouter.get('/:id', requireAuth, async (req, res, next) => {
       data: {
         id: album.id,
         name: album.name,
-        assets: album.assets.map(({ asset }) => ({
-          id: asset.id,
-          thumbUrl: asset.thumbPath ?? undefined,
-          fileUrl: asset.filePath,
-          originalName: asset.originalName ?? undefined,
-          takenAt: asset.takenAt?.toISOString(),
-          isFavorite: asset.isFavorite,
-        })),
+        coverAssetId: album.assets.find(({ assetId }) => assetId === album.coverAssetId)?.assetId ?? album.assets[0]?.assetId ?? null,
+        count: album.assets.length,
+        assets: album.assets.map(({ asset }) => assetDto(asset)),
       },
     })
   } catch (err) {
@@ -111,12 +116,9 @@ albumsRouter.post('/:id/share', requireAuth, async (req, res, next) => {
       return
     }
     const { expiresInDays } = (req.body ?? {}) as { expiresInDays?: unknown }
-    const expiresAt =
-      typeof expiresInDays === 'number'
-        ? new Date(Date.now() + expiresInDays * 24 * 3600 * 1000)
-        : null
+    const expiresAt = typeof expiresInDays === 'number' ? new Date(Date.now() + expiresInDays * 86400000) : null
 
-    const key = randomBytes(12).toString('base64url').slice(0, 20)
+    const key = randomBytes(15).toString('base64url')
     await prisma.share.create({ data: { key, albumId: album.id, expiresAt } })
     res.json({ data: { key, url: `/s/${key}` } })
   } catch (err) {
